@@ -65,7 +65,8 @@ export default function DashboardPage() {
               style={{ animationDelay: "0.15s", opacity: 0 }}
             >
               <div className="text-white/30 text-xs font-mono tracking-widest uppercase mb-5">
-                Today's leaders
+                Today&apos;s leaders
+
               </div>
               {topToday.length === 0 ? (
                 <div className="text-center py-8 text-white/20 text-sm font-mono">
