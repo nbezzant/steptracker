@@ -12,6 +12,7 @@ const navItems = [
   { href: "/calendar", label: "Calendar", icon: "📅" },
   { href: "/leaderboard", label: "Leaderboard", icon: "🏆" },
   { href: "/team", label: "Team", icon: "🤝" },
+  { href: "/trend", label: "Trend", icon: "📈" },
 ];
 
 export default function Nav() {

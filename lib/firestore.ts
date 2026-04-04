@@ -267,3 +267,31 @@ export async function getTeamDailySteps(
 
   return totals as Record<TeamId, number>;
 }
+
+export async function getAllUsersStepsForMonth(
+  year: number,
+  month: number
+): Promise<Record<string, StepEntry[]>> {
+  const startDate = format(new Date(year, month, 1), "yyyy-MM-dd");
+  const endDate = format(new Date(year, month + 1, 0), "yyyy-MM-dd");
+
+  const q = query(
+    collection(db, "steps"),
+    where("date", ">=", startDate),
+    where("date", "<=", endDate)
+  );
+
+  const snap = await getDocs(q);
+  const byUser: Record<string, StepEntry[]> = {};
+  snap.docs.forEach((d) => {
+    const entry = d.data() as StepEntry;
+    if (!byUser[entry.uid]) byUser[entry.uid] = [];
+    byUser[entry.uid].push(entry);
+  });
+  return byUser;
+}
+
+export async function getAllUserProfiles(): Promise<UserProfile[]> {
+  const snap = await getDocs(collection(db, "users"));
+  return snap.docs.map((d) => d.data() as UserProfile);
+}
