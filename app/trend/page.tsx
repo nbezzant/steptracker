@@ -12,51 +12,52 @@ import {
   TeamId,
 } from "@/lib/firestore";
 import { formatSteps, cn } from "@/lib/utils";
-import { eachDayOfInterval, startOfMonth, endOfMonth, format, isAfter, startOfDay } from "date-fns";
+import {
+  eachDayOfInterval,
+  startOfMonth,
+  endOfMonth,
+  format,
+  startOfDay,
+} from "date-fns";
 
 const TEAM_GOAL = 1_000_000;
 const TODAY = startOfDay(new Date());
 const MONTH = new Date();
-const DAYS_IN_MONTH = endOfMonth(MONTH).getDate();
+const TOTAL_DAYS_IN_MONTH = endOfMonth(MONTH).getDate();
+
+// Only days from start of month through today
 const ALL_DAYS = eachDayOfInterval({
   start: startOfMonth(MONTH),
-  end: endOfMonth(MONTH),
+  end: TODAY,
 });
-
-type ChartMode = "individual" | "team";
-
-interface DayPoint {
-  date: string;
-  label: string;
-  dayNum: number;
-  isPast: boolean;
-}
+const DAYS_SO_FAR = ALL_DAYS.length;
 
 const CHART_W = 800;
-const CHART_H = 320;
-const PAD = { top: 20, right: 24, bottom: 40, left: 72 };
+const CHART_H = 300;
+const PAD = { top: 20, right: 24, bottom: 36, left: 72 };
 const INNER_W = CHART_W - PAD.left - PAD.right;
 const INNER_H = CHART_H - PAD.top - PAD.bottom;
 
-function buildDayPoints(): DayPoint[] {
-  return ALL_DAYS.map((d, i) => ({
-    date: format(d, "yyyy-MM-dd"),
-    label: format(d, "d"),
-    dayNum: i + 1,
-    isPast: !isAfter(startOfDay(d), TODAY),
-  }));
-}
+type ChartMode = "individual" | "team";
 
-function toX(dayNum: number) {
-  return PAD.left + ((dayNum - 1) / (DAYS_IN_MONTH - 1)) * INNER_W;
+function toX(dayIndex: number) {
+  if (DAYS_SO_FAR === 1) return PAD.left + INNER_W / 2;
+  return PAD.left + (dayIndex / (DAYS_SO_FAR - 1)) * INNER_W;
 }
 
 function toY(steps: number, maxSteps: number) {
   return PAD.top + INNER_H - (steps / maxSteps) * INNER_H;
 }
 
-function buildPolyline(points: { x: number; y: number }[]) {
-  return points.map((p) => `${p.x},${p.y}`).join(" ");
+function polyline(points: { x: number; y: number }[]) {
+  return points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+}
+
+function yTicks(maxVal: number) {
+  return [0, 0.25, 0.5, 0.75, 1].map((pct) => ({
+    val: Math.round(maxVal * pct),
+    y: toY(maxVal * pct, maxVal),
+  }));
 }
 
 export default function TrendPage() {
@@ -81,134 +82,117 @@ export default function TrendPage() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   if (!profile?.teamId) return <AuthGuard><div /></AuthGuard>;
 
-  const days = buildDayPoints();
-  const todayIdx = days.findIndex((d) => !d.isPast);
-  const lastPastIdx = todayIdx === -1 ? days.length - 1 : todayIdx - 1;
-
-  // ── Individual data ──────────────────────────────────────────────────────
-  const myEntries = allSteps[profile.uid] ?? [];
-  const myStepMap: Record<string, number> = {};
-  myEntries.forEach((e) => (myStepMap[e.date] = e.steps));
-
-  const teamMembers = allUsers.filter((u) => u.teamId === profile.teamId);
+  const myTeamId = profile.teamId;
+  const teamInfo = TEAMS[myTeamId];
+  const teamMembers = allUsers.filter((u) => u.teamId === myTeamId);
   const myGoal = Math.round(TEAM_GOAL / Math.max(teamMembers.length, 1));
-  const myPacePerDay = myGoal / DAYS_IN_MONTH;
 
-  // Cumulative actual steps per day for me
-  let myCumulative = 0;
-  const myActualPoints: { x: number; y: number }[] = [];
-  days.forEach((d) => {
-    if (!d.isPast) return;
-    myCumulative += myStepMap[d.date] ?? 0;
-    myActualPoints.push({ x: toX(d.dayNum), y: 0 }); // filled below
-  });
+  // Goals scaled to days elapsed so far
+  const myGoalToDate = Math.round(myGoal * (DAYS_SO_FAR / TOTAL_DAYS_IN_MONTH));
+  const teamGoalToDate = Math.round(TEAM_GOAL * (DAYS_SO_FAR / TOTAL_DAYS_IN_MONTH));
 
-  // rebuild with correct Y after we know max
-  const myMax = Math.max(myGoal * 1.1, myCumulative * 1.1, 1);
-  myCumulative = 0;
-  const myActual: { x: number; y: number }[] = [];
-  days.forEach((d) => {
-    if (!d.isPast) return;
-    myCumulative += myStepMap[d.date] ?? 0;
-    myActual.push({ x: toX(d.dayNum), y: toY(myCumulative, myMax) });
-  });
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
-  const myPaceLine = [
-    { x: toX(1), y: toY(0, myMax) },
-    { x: toX(DAYS_IN_MONTH), y: toY(myGoal, myMax) },
-  ];
+  function stepMapFor(uid: string): Record<string, number> {
+    const map: Record<string, number> = {};
+    (allSteps[uid] ?? []).forEach((e) => (map[e.date] = e.steps));
+    return map;
+  }
 
-  const myDelta = myCumulative - myPacePerDay * (lastPastIdx + 1);
-
-  // ── Team data ────────────────────────────────────────────────────────────
-  const allTeamIds = Object.keys(TEAMS) as TeamId[];
-
-  function getTeamCumulativeByDay(teamId: TeamId): { x: number; y: number }[] {
-    const members = allUsers.filter((u) => u.teamId === teamId);
-    const memberGoal = TEAM_GOAL;
-    const teamMax = Math.max(memberGoal * 1.1, 1);
-
+  function buildUserLine(uid: string, maxVal: number): { x: number; y: number }[] {
+    const map = stepMapFor(uid);
     let cum = 0;
-    const pts: { x: number; y: number }[] = [];
-    days.forEach((d) => {
-      if (!d.isPast) return;
-      members.forEach((m) => {
-        const entries = allSteps[m.uid] ?? [];
-        const entry = entries.find((e) => e.date === d.date);
-        cum += entry?.steps ?? 0;
-      });
-      pts.push({ x: toX(d.dayNum), y: toY(cum, teamMax) });
+    return ALL_DAYS.map((d, i) => {
+      cum += map[format(d, "yyyy-MM-dd")] ?? 0;
+      return { x: toX(i), y: toY(cum, maxVal) };
     });
-    return pts;
   }
 
-  const myTeamActual = getTeamCumulativeByDay(profile.teamId);
-  const teamMax = Math.max(TEAM_GOAL * 1.1, 1);
-  const teamPaceLine = [
-    { x: toX(1), y: toY(0, teamMax) },
-    { x: toX(DAYS_IN_MONTH), y: toY(TEAM_GOAL, teamMax) },
-  ];
-
-  // Team delta
-  const myTeamMembers = allUsers.filter((u) => u.teamId === profile.teamId);
-  let myTeamTotal = 0;
-  myTeamMembers.forEach((m) => {
-    const entries = allSteps[m.uid] ?? [];
-    entries.forEach((e) => (myTeamTotal += e.steps));
-  });
-  const teamPaceNow = (TEAM_GOAL / DAYS_IN_MONTH) * (lastPastIdx + 1);
-  const teamDelta = myTeamTotal - teamPaceNow;
-
-  // ── Other individuals (for overlay) ─────────────────────────────────────
-  function getUserActual(uid: string): { x: number; y: number }[] {
-    const entries = allSteps[uid] ?? [];
-    const stepMap: Record<string, number> = {};
-    entries.forEach((e) => (stepMap[e.date] = e.steps));
+  function buildTeamLine(teamId: TeamId, maxVal: number): { x: number; y: number }[] {
+    const members = allUsers.filter((u) => u.teamId === teamId);
     let cum = 0;
-    return days
-      .filter((d) => d.isPast)
-      .map((d) => {
-        cum += stepMap[d.date] ?? 0;
-        return { x: toX(d.dayNum), y: toY(cum, myMax) };
+    return ALL_DAYS.map((d, i) => {
+      const dateStr = format(d, "yyyy-MM-dd");
+      members.forEach((m) => {
+        cum += (allSteps[m.uid] ?? []).find((e) => e.date === dateStr)?.steps ?? 0;
       });
+      return { x: toX(i), y: toY(cum, maxVal) };
+    });
   }
+
+  // ── Individual data ───────────────────────────────────────────────────────
+
+  const myStepMap = stepMapFor(profile.uid);
+  let myCumulative = 0;
+  ALL_DAYS.forEach((d) => {
+    myCumulative += myStepMap[format(d, "yyyy-MM-dd")] ?? 0;
+  });
+
+  const indivMax = Math.max(myGoalToDate * 1.3, myCumulative * 1.3, 1000);
+  const myActualLine = buildUserLine(profile.uid, indivMax);
+  const myPaceLine = [
+    { x: toX(0), y: toY(0, indivMax) },
+    { x: toX(DAYS_SO_FAR - 1), y: toY(myGoalToDate, indivMax) },
+  ];
 
   const otherUsers = allUsers.filter((u) => u.uid !== profile.uid);
-  const otherTeams = allTeamIds.filter((t) => t !== profile.teamId);
+  const myDelta = myCumulative - myGoalToDate;
 
-  // ── Y-axis ticks ─────────────────────────────────────────────────────────
-  function yTicks(maxVal: number) {
-    const step = maxVal / 4;
-    return [0, 1, 2, 3, 4].map((i) => ({
-      val: Math.round(step * i),
-      y: toY(step * i, maxVal),
-    }));
-  }
+  // ── Team data ─────────────────────────────────────────────────────────────
 
-  const indivTicks = yTicks(myMax);
-  const teamTicks = yTicks(teamMax);
+  let myTeamTotal = 0;
+  teamMembers.forEach((m) => {
+    (allSteps[m.uid] ?? []).forEach((e) => (myTeamTotal += e.steps));
+  });
+
+  const teamMax = Math.max(teamGoalToDate * 1.3, myTeamTotal * 1.3, 1000);
+  const myTeamLine = buildTeamLine(myTeamId, teamMax);
+  const teamPaceLine = [
+    { x: toX(0), y: toY(0, teamMax) },
+    { x: toX(DAYS_SO_FAR - 1), y: toY(teamGoalToDate, teamMax) },
+  ];
+
+  const otherTeamIds = (Object.keys(TEAMS) as TeamId[]).filter((t) => t !== myTeamId);
+  const teamDelta = myTeamTotal - teamGoalToDate;
+
+  // ── X-axis labels ─────────────────────────────────────────────────────────
+
+  const xLabels = ALL_DAYS
+    .map((d, i) => ({ i, label: format(d, "d") }))
+    .filter(({ i }) => i === 0 || (i + 1) % 5 === 0 || i === DAYS_SO_FAR - 1);
 
   return (
     <AuthGuard>
       <div className="max-w-4xl mx-auto px-4 py-8">
+
         {/* Header */}
         <div className="mb-8 animate-fade-up">
-          <div className="text-white/30 text-xs font-mono tracking-widest uppercase mb-1">April 2025</div>
+          <div className="text-white/30 text-xs font-mono tracking-widest uppercase mb-1">
+            {format(MONTH, "MMMM yyyy")}
+          </div>
           <h1 className="font-display text-4xl text-white">
             Pace <span className="italic text-[var(--gold)]">Tracker</span>
           </h1>
           <p className="text-white/30 text-sm font-mono mt-1">
-            Team goal: 1,000,000 steps · Your goal:{" "}
-            <span className="text-[var(--gold)]">{formatSteps(myGoal)}</span> steps
+            Team goal:{" "}
+            <span className="text-white/50">1,000,000 steps</span>
+            {" · "}Your goal:{" "}
+            <span className="text-[var(--gold)]">{formatSteps(myGoal)}</span>
+            {" · "}Day {DAYS_SO_FAR} of {TOTAL_DAYS_IN_MONTH}
           </p>
         </div>
 
         {/* Mode toggle */}
-        <div className="flex gap-2 mb-6 animate-fade-up" style={{ animationDelay: "0.05s", opacity: 0 }}>
+        <div
+          className="flex gap-2 mb-6 animate-fade-up"
+          style={{ animationDelay: "0.05s", opacity: 0 }}
+        >
           {(["individual", "team"] as ChartMode[]).map((m) => (
             <button
               key={m}
@@ -225,11 +209,14 @@ export default function TrendPage() {
           ))}
         </div>
 
-        {/* Chart */}
-        <div className="glass rounded-3xl p-6 mb-4 animate-fade-up" style={{ animationDelay: "0.1s", opacity: 0 }}>
+        {/* Chart card */}
+        <div
+          className="glass rounded-3xl p-6 mb-4 animate-fade-up"
+          style={{ animationDelay: "0.1s", opacity: 0 }}
+        >
           {loading ? (
             <div className="flex items-center justify-center h-64 text-white/20 font-mono text-sm">
-              Loading data...
+              Loading...
             </div>
           ) : (
             <svg
@@ -237,8 +224,8 @@ export default function TrendPage() {
               className="w-full"
               style={{ fontFamily: "DM Mono, monospace" }}
             >
-              {/* Grid lines */}
-              {(mode === "individual" ? indivTicks : teamTicks).map((tick) => (
+              {/* Y grid + labels */}
+              {(mode === "individual" ? yTicks(indivMax) : yTicks(teamMax)).map((tick) => (
                 <g key={tick.val}>
                   <line
                     x1={PAD.left} y1={tick.y}
@@ -254,151 +241,138 @@ export default function TrendPage() {
                 </g>
               ))}
 
-              {/* X-axis labels — every 5 days */}
-              {days.filter((d) => d.dayNum % 5 === 1 || d.dayNum === DAYS_IN_MONTH).map((d) => (
+              {/* X labels */}
+              {xLabels.map(({ i, label }) => (
                 <text
-                  key={d.date}
-                  x={toX(d.dayNum)} y={CHART_H - PAD.bottom + 16}
+                  key={i}
+                  x={toX(i)} y={CHART_H - PAD.bottom + 14}
                   textAnchor="middle" fontSize="10" fill="rgba(255,255,255,0.25)"
                 >
-                  {d.label}
+                  {label}
                 </text>
               ))}
 
-              {/* Today vertical line */}
-              {lastPastIdx >= 0 && (
-                <line
-                  x1={toX(lastPastIdx + 1)} y1={PAD.top}
-                  x2={toX(lastPastIdx + 1)} y2={CHART_H - PAD.bottom}
-                  stroke="rgba(255,255,255,0.1)" strokeWidth="1" strokeDasharray="4,4"
-                />
-              )}
-
-              {/* ── INDIVIDUAL MODE ── */}
+              {/* ── INDIVIDUAL ── */}
               {mode === "individual" && (
                 <>
-                  {/* Other users overlay */}
                   {showOthers && otherUsers.map((u) => {
-                    const pts = getUserActual(u.uid);
-                    if (pts.length === 0) return null;
-                    const teamColor = u.teamId ? TEAMS[u.teamId as TeamId].color : "#666";
+                    const line = buildUserLine(u.uid, indivMax);
+                    const color = u.teamId ? TEAMS[u.teamId as TeamId].color : "#666";
                     return (
                       <polyline
                         key={u.uid}
-                        points={buildPolyline(pts)}
+                        points={polyline(line)}
                         fill="none"
-                        stroke={teamColor}
+                        stroke={color}
                         strokeWidth="1.5"
-                        strokeOpacity="0.35"
+                        strokeOpacity="0.3"
+                        strokeLinejoin="round"
                       />
                     );
                   })}
 
-                  {/* Pace line */}
+                  {/* Pace */}
                   <polyline
-                    points={buildPolyline(myPaceLine)}
+                    points={polyline(myPaceLine)}
                     fill="none"
-                    stroke="rgba(201,168,76,0.35)"
+                    stroke="rgba(201,168,76,0.45)"
                     strokeWidth="2"
                     strokeDasharray="6,4"
                   />
 
-                  {/* My actual line */}
-                  {myActual.length > 0 && (
-                    <>
-                      <polyline
-                        points={buildPolyline(myActual)}
-                        fill="none"
-                        stroke="var(--gold)"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      {/* End dot */}
-                      <circle
-                        cx={myActual[myActual.length - 1].x}
-                        cy={myActual[myActual.length - 1].y}
-                        r="4" fill="var(--gold)"
-                      />
-                    </>
+                  {/* My actual */}
+                  <polyline
+                    points={polyline(myActualLine)}
+                    fill="none"
+                    stroke="var(--gold)"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  {myActualLine.length > 0 && (
+                    <circle
+                      cx={myActualLine[myActualLine.length - 1].x}
+                      cy={myActualLine[myActualLine.length - 1].y}
+                      r="4" fill="var(--gold)"
+                    />
                   )}
 
                   {/* Legend */}
-                  <g transform={`translate(${PAD.left + 8}, ${PAD.top + 8})`}>
-                    <line x1="0" y1="6" x2="20" y2="6" stroke="rgba(201,168,76,0.5)" strokeWidth="2" strokeDasharray="5,3" />
-                    <text x="26" y="10" fontSize="10" fill="rgba(255,255,255,0.4)">Your pace target</text>
-                    <line x1="0" y1="22" x2="20" y2="22" stroke="var(--gold)" strokeWidth="2.5" />
-                    <text x="26" y="26" fontSize="10" fill="rgba(255,255,255,0.4)">Your actual steps</text>
+                  <g transform={`translate(${PAD.left + 8},${PAD.top + 6})`}>
+                    <line x1="0" y1="6" x2="18" y2="6"
+                      stroke="rgba(201,168,76,0.5)" strokeWidth="2" strokeDasharray="5,3" />
+                    <text x="24" y="10" fontSize="10" fill="rgba(255,255,255,0.35)">Pace to goal</text>
+                    <line x1="0" y1="22" x2="18" y2="22"
+                      stroke="var(--gold)" strokeWidth="2.5" />
+                    <text x="24" y="26" fontSize="10" fill="rgba(255,255,255,0.35)">Your steps</text>
                   </g>
                 </>
               )}
 
-              {/* ── TEAM MODE ── */}
+              {/* ── TEAM ── */}
               {mode === "team" && (
                 <>
-                  {/* Other teams overlay */}
-                  {showOthers && otherTeams.map((teamId) => {
-                    const pts = getTeamCumulativeByDay(teamId);
-                    if (pts.length === 0) return null;
-                    const color = TEAMS[teamId].color;
+                  {showOthers && otherTeamIds.map((tid) => {
+                    const line = buildTeamLine(tid, teamMax);
+                    const last = line[line.length - 1];
                     return (
-                      <polyline
-                        key={teamId}
-                        points={buildPolyline(pts)}
-                        fill="none"
-                        stroke={color}
-                        strokeWidth="2"
-                        strokeOpacity="0.45"
-                      />
+                      <g key={tid}>
+                        <polyline
+                          points={polyline(line)}
+                          fill="none"
+                          stroke={TEAMS[tid].color}
+                          strokeWidth="2"
+                          strokeOpacity="0.4"
+                          strokeLinejoin="round"
+                        />
+                        {last && (
+                          <text
+                            x={last.x + 5} y={last.y + 4}
+                            fontSize="9" fill={TEAMS[tid].color} opacity="0.8"
+                          >
+                            {TEAMS[tid].name}
+                          </text>
+                        )}
+                      </g>
                     );
                   })}
 
-                  {/* Team pace line */}
+                  {/* Pace */}
                   <polyline
-                    points={buildPolyline(teamPaceLine)}
+                    points={polyline(teamPaceLine)}
                     fill="none"
-                    stroke="rgba(201,168,76,0.35)"
+                    stroke="rgba(201,168,76,0.45)"
                     strokeWidth="2"
                     strokeDasharray="6,4"
                   />
 
                   {/* My team actual */}
-                  {myTeamActual.length > 0 && (
-                    <>
-                      <polyline
-                        points={buildPolyline(myTeamActual)}
-                        fill="none"
-                        stroke={TEAMS[profile.teamId].color}
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <circle
-                        cx={myTeamActual[myTeamActual.length - 1].x}
-                        cy={myTeamActual[myTeamActual.length - 1].y}
-                        r="4" fill={TEAMS[profile.teamId].color}
-                      />
-                    </>
+                  <polyline
+                    points={polyline(myTeamLine)}
+                    fill="none"
+                    stroke={teamInfo.color}
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  {myTeamLine.length > 0 && (
+                    <circle
+                      cx={myTeamLine[myTeamLine.length - 1].x}
+                      cy={myTeamLine[myTeamLine.length - 1].y}
+                      r="4" fill={teamInfo.color}
+                    />
                   )}
 
-                  {/* Other teams labels */}
-                  {showOthers && otherTeams.map((teamId) => {
-                    const pts = getTeamCumulativeByDay(teamId);
-                    if (pts.length === 0) return null;
-                    const last = pts[pts.length - 1];
-                    return (
-                      <text key={teamId} x={last.x + 4} y={last.y + 4} fontSize="9" fill={TEAMS[teamId].color} opacity="0.7">
-                        {TEAMS[teamId].name}
-                      </text>
-                    );
-                  })}
-
                   {/* Legend */}
-                  <g transform={`translate(${PAD.left + 8}, ${PAD.top + 8})`}>
-                    <line x1="0" y1="6" x2="20" y2="6" stroke="rgba(201,168,76,0.5)" strokeWidth="2" strokeDasharray="5,3" />
-                    <text x="26" y="10" fontSize="10" fill="rgba(255,255,255,0.4)">Team pace target</text>
-                    <line x1="0" y1="22" x2="20" y2="22" stroke={TEAMS[profile.teamId].color} strokeWidth="2.5" />
-                    <text x="26" y="26" fontSize="10" fill="rgba(255,255,255,0.4)">{TEAMS[profile.teamId].name} actual</text>
+                  <g transform={`translate(${PAD.left + 8},${PAD.top + 6})`}>
+                    <line x1="0" y1="6" x2="18" y2="6"
+                      stroke="rgba(201,168,76,0.5)" strokeWidth="2" strokeDasharray="5,3" />
+                    <text x="24" y="10" fontSize="10" fill="rgba(255,255,255,0.35)">Pace to 1M</text>
+                    <line x1="0" y1="22" x2="18" y2="22"
+                      stroke={teamInfo.color} strokeWidth="2.5" />
+                    <text x="24" y="26" fontSize="10" fill="rgba(255,255,255,0.35)">
+                      {teamInfo.emoji} {teamInfo.name}
+                    </text>
                   </g>
                 </>
               )}
@@ -410,7 +384,7 @@ export default function TrendPage() {
             <button
               onClick={() => setShowOthers(!showOthers)}
               className={cn(
-                "w-5 h-5 rounded flex items-center justify-center transition-all border",
+                "w-5 h-5 rounded flex items-center justify-center transition-all border flex-shrink-0",
                 showOthers
                   ? "bg-[var(--gold)] border-[var(--gold)]"
                   : "border-white/20 bg-transparent"
@@ -419,15 +393,13 @@ export default function TrendPage() {
               {showOthers && <span className="text-black text-xs font-bold">✓</span>}
             </button>
             <span className="text-white/40 text-sm font-mono">
-              {mode === "individual"
-                ? "Show other participants"
-                : "Show other teams"}
+              {mode === "individual" ? "Show other participants" : "Show other teams"}
             </span>
             {showOthers && mode === "team" && (
-              <div className="flex gap-3 ml-4">
-                {otherTeams.map((t) => (
-                  <div key={t} className="flex items-center gap-1">
-                    <div className="w-3 h-0.5 rounded" style={{ backgroundColor: TEAMS[t].color }} />
+              <div className="flex gap-4 ml-2">
+                {otherTeamIds.map((t) => (
+                  <div key={t} className="flex items-center gap-1.5">
+                    <div className="w-4 h-0.5 rounded" style={{ backgroundColor: TEAMS[t].color }} />
                     <span className="text-xs font-mono text-white/30">{TEAMS[t].name}</span>
                   </div>
                 ))}
@@ -436,15 +408,18 @@ export default function TrendPage() {
           </div>
         </div>
 
-        {/* Delta cards — always show both */}
-        <div className="grid grid-cols-2 gap-4 animate-fade-up" style={{ animationDelay: "0.15s", opacity: 0 }}>
-          {/* Individual delta */}
+        {/* Delta cards — always both visible */}
+        <div
+          className="grid grid-cols-2 gap-4 animate-fade-up"
+          style={{ animationDelay: "0.15s", opacity: 0 }}
+        >
+          {/* Individual */}
           <div className={cn(
-            "glass rounded-2xl p-6 text-center border",
-            mode === "individual" ? "border-white/10" : "border-white/[0.04] opacity-60"
+            "glass rounded-2xl p-6 text-center border transition-all duration-300",
+            mode === "individual" ? "border-white/10" : "border-white/[0.03] opacity-50"
           )}>
             <div className="text-white/30 text-xs font-mono uppercase tracking-widest mb-3">
-              You vs. your pace
+              You vs. pace
             </div>
             <div className={cn(
               "font-display text-4xl font-bold",
@@ -453,17 +428,17 @@ export default function TrendPage() {
               {myDelta >= 0 ? "+" : ""}{myDelta.toLocaleString()}
             </div>
             <div className="text-white/20 text-xs font-mono mt-2">
-              steps {myDelta >= 0 ? "ahead" : "behind"} of pace
+              {formatSteps(myCumulative)} of {formatSteps(myGoalToDate)} target
             </div>
           </div>
 
-          {/* Team delta */}
+          {/* Team */}
           <div className={cn(
-            "glass rounded-2xl p-6 text-center border",
-            mode === "team" ? "border-white/10" : "border-white/[0.04] opacity-60"
+            "glass rounded-2xl p-6 text-center border transition-all duration-300",
+            mode === "team" ? "border-white/10" : "border-white/[0.03] opacity-50"
           )}>
             <div className="text-white/30 text-xs font-mono uppercase tracking-widest mb-3">
-              {TEAMS[profile.teamId].emoji} Team vs. pace
+              {teamInfo.emoji} {teamInfo.name} vs. pace
             </div>
             <div className={cn(
               "font-display text-4xl font-bold",
@@ -472,7 +447,7 @@ export default function TrendPage() {
               {teamDelta >= 0 ? "+" : ""}{Math.round(teamDelta).toLocaleString()}
             </div>
             <div className="text-white/20 text-xs font-mono mt-2">
-              steps {teamDelta >= 0 ? "ahead" : "behind"} of pace
+              {formatSteps(myTeamTotal)} of {formatSteps(teamGoalToDate)} target
             </div>
           </div>
         </div>
