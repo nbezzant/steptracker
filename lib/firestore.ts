@@ -209,8 +209,7 @@ export async function getUserStepsForDate(
 export async function getPersonalLeaderboard(): Promise<UserProfile[]> {
   const q = query(
     collection(db, "users"),
-    where("teamId", "!=", null),
-    orderBy("teamId"),
+    where("totalSteps", ">", 0),
     orderBy("totalSteps", "desc")
   );
   const snap = await getDocs(q);
