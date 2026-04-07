@@ -68,7 +68,7 @@ export default function Nav() {
       <nav className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-6 py-4 glass border-b border-white/[0.05]">
         {/* Logo */}
         <Link href="/dashboard" className="font-display text-xl text-white flex items-center gap-2">
-          Step<span className="italic text-[var(--gold)]">Tracker</span>
+          FlakeFam<span className="italic text-[var(--gold)]">Step Challenge</span>
           {team && (
             <span className="text-xs font-mono font-normal text-white/30 ml-2">
               {team.emoji} {team.name}
