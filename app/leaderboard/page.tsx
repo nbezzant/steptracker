@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import AuthGuard from "@/components/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -130,14 +131,23 @@ export default function LeaderboardPage() {
 
                   {/* Name + team */}
                   <div className="flex-1 min-w-0">
-                    <div className={cn("font-medium truncate", isMe ? "text-[var(--gold)]" : "text-white/80")}>
+                    <Link
+                      href={`/calendar?userId=${entry.user.uid}`}
+                      className={cn(
+                        "font-medium truncate block hover:underline underline-offset-2 decoration-white/20",
+                        isMe ? "text-[var(--gold)]" : "text-white/80"
+                      )}
+                    >
                       {entry.user.displayName}
                       {isMe && <span className="text-xs ml-2 text-[var(--gold)]/60 font-mono">(you)</span>}
-                    </div>
+                    </Link>
                     {teamInfo && (
-                      <div className="text-xs text-white/30 font-mono">
+                      <Link
+                        href={`/calendar?teamId=${entry.user.teamId}`}
+                        className="text-xs text-white/30 font-mono hover:text-white/50 transition-colors"
+                      >
                         {teamInfo.emoji} {teamInfo.name}
-                      </div>
+                      </Link>
                     )}
                   </div>
 

@@ -1,13 +1,20 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
 import {
   getUserStepsForMonth,
+  getTeamStepsForMonth,
+  getUserProfile,
   upsertStepEntry,
   dateKey,
   StepEntry,
+  TEAMS,
+  TeamId,
+  UserProfile,
 } from "@/lib/firestore";
 import { formatSteps, cn } from "@/lib/utils";
 import {
@@ -23,25 +30,45 @@ import {
   addMonths,
 } from "date-fns";
 
-export default function CalendarPage() {
+function CalendarContent() {
   const { profile, refreshProfile } = useAuth();
+  const searchParams = useSearchParams();
+  const viewUserId = searchParams.get("userId");
+  const viewTeamId = searchParams.get("teamId") as TeamId | null;
+
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [stepMap, setStepMap] = useState<Record<string, number>>({});
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [viewProfile, setViewProfile] = useState<UserProfile | null>(null);
+
+  const isViewAs = !!(viewUserId || viewTeamId);
+
+  useEffect(() => {
+    if (viewUserId) {
+      getUserProfile(viewUserId).then(setViewProfile);
+    } else {
+      setViewProfile(null);
+    }
+  }, [viewUserId]);
 
   const loadMonth = useCallback(async () => {
     if (!profile) return;
-    const entries: StepEntry[] = await getUserStepsForMonth(
-      profile.uid,
-      currentMonth.getFullYear(),
-      currentMonth.getMonth()
-    );
-    const map: Record<string, number> = {};
-    entries.forEach((e) => (map[e.date] = e.steps));
-    setStepMap(map);
-  }, [profile, currentMonth]);
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+
+    if (viewTeamId) {
+      const teamSteps = await getTeamStepsForMonth(viewTeamId, year, month);
+      setStepMap(teamSteps);
+    } else {
+      const uid = viewUserId || profile.uid;
+      const entries: StepEntry[] = await getUserStepsForMonth(uid, year, month);
+      const map: Record<string, number> = {};
+      entries.forEach((e) => (map[e.date] = e.steps));
+      setStepMap(map);
+    }
+  }, [profile, currentMonth, viewUserId, viewTeamId]);
 
   useEffect(() => {
     loadMonth();
@@ -57,6 +84,7 @@ export default function CalendarPage() {
   const maxSteps = Math.max(...Object.values(stepMap), 1);
 
   const handleEdit = (dateStr: string, current: number) => {
+    if (isViewAs) return;
     setEditing(dateStr);
     setEditValue(current > 0 ? current.toString() : "");
   };
@@ -80,19 +108,45 @@ export default function CalendarPage() {
   const totalThisMonth = Object.values(stepMap).reduce((a, b) => a + b, 0);
   const daysLogged = Object.values(stepMap).filter((v) => v > 0).length;
 
+  const viewAsLabel = viewTeamId
+    ? `${TEAMS[viewTeamId]?.emoji} ${TEAMS[viewTeamId]?.name} Team`
+    : viewProfile
+    ? viewProfile.displayName
+    : null;
+
   return (
     <AuthGuard>
       <div className="max-w-4xl mx-auto px-4 py-8">
+        {/* View-as banner */}
+        {isViewAs && (
+          <div className="mb-5 flex items-center gap-3 animate-fade-up">
+            <Link
+              href="/calendar"
+              className="text-xs text-white/30 font-mono hover:text-white/60 transition-colors"
+            >
+              ← my calendar
+            </Link>
+            {viewAsLabel && (
+              <div className="text-xs font-mono text-[var(--gold)]/80 bg-[var(--gold)]/10 px-3 py-1 rounded-full">
+                viewing: {viewAsLabel}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between mb-8 animate-fade-up">
           <div>
             <div className="text-white/30 text-xs font-mono tracking-widest uppercase mb-1">
-              Calendar
+              {isViewAs ? "Viewing" : "Calendar"}
             </div>
             <h1 className="font-display text-4xl text-white">
               {format(currentMonth, "MMMM")}{" "}
               <span className="text-[var(--gold)]">{format(currentMonth, "yyyy")}</span>
             </h1>
+            {isViewAs && viewAsLabel && (
+              <div className="text-white/40 text-sm font-mono mt-1">{viewAsLabel}</div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -152,6 +206,7 @@ export default function CalendarPage() {
               const today = isToday(day);
               const intensity = steps > 0 ? Math.max(0.1, steps / maxSteps) : 0;
               const isEditing = editing === dateStr;
+              const clickable = !future && inMonth && !isViewAs;
 
               return (
                 <div
@@ -160,7 +215,8 @@ export default function CalendarPage() {
                     "relative aspect-square rounded-xl flex flex-col items-center justify-center text-center transition-all duration-200 group",
                     !inMonth && "opacity-20",
                     future && "opacity-30 cursor-not-allowed",
-                    !future && inMonth && "cursor-pointer hover:ring-1 hover:ring-[var(--gold)]/30",
+                    clickable && "cursor-pointer hover:ring-1 hover:ring-[var(--gold)]/30",
+                    isViewAs && inMonth && !future && "cursor-default",
                     today && "ring-1 ring-[var(--gold)]/60"
                   )}
                   style={{
@@ -228,9 +284,19 @@ export default function CalendarPage() {
         </div>
 
         <p className="text-center text-white/20 text-xs font-mono mt-4">
-          Tap any past or current day to log steps · Future days are locked
+          {isViewAs
+            ? "Read-only view · Steps shown are totals for this person or team"
+            : "Tap any past or current day to log steps · Future days are locked"}
         </p>
       </div>
     </AuthGuard>
+  );
+}
+
+export default function CalendarPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen" />}>
+      <CalendarContent />
+    </Suspense>
   );
 }

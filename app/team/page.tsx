@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import AuthGuard from "@/components/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -121,7 +122,12 @@ export default function TeamPage() {
                         <div className="text-4xl">{teamInfo?.emoji}</div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-display text-2xl text-white">{teamInfo?.name}</span>
+                            <Link
+                              href={`/calendar?teamId=${team.id}`}
+                              className="font-display text-2xl text-white hover:text-[var(--gold)] transition-colors"
+                            >
+                              {teamInfo?.name}
+                            </Link>
                             {isMyTeam && (
                               <span className="text-xs font-mono text-[var(--gold)] bg-[var(--gold)]/10 px-2 py-0.5 rounded-full">
                                 your team

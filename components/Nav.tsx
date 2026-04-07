@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { TEAMS } from "@/lib/firestore";
-import { cn } from "@/lib/utils";
+import { TEAMS, getStepEntry, upsertStepEntry, dateKey } from "@/lib/firestore";
+import { formatSteps, cn } from "@/lib/utils";
 import Image from "next/image";
 
 const navItems = [
@@ -18,10 +18,50 @@ const navItems = [
 
 export default function Nav() {
   const pathname = usePathname();
-  const { profile, signOut } = useAuth();
+  const { profile, refreshProfile, signOut } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const [todaySteps, setTodaySteps] = useState<number | null>(null);
+  const [stepEditing, setStepEditing] = useState(false);
+  const [stepValue, setStepValue] = useState("");
+  const [stepSaving, setStepSaving] = useState(false);
+
   const team = profile?.teamId ? TEAMS[profile.teamId] : null;
+  const todayKey = dateKey(new Date());
+
+  const loadTodaySteps = useCallback(async () => {
+    if (!profile) return;
+    const entry = await getStepEntry(profile.uid, todayKey);
+    setTodaySteps(entry?.steps ?? 0);
+  }, [profile, todayKey]);
+
+  useEffect(() => {
+    loadTodaySteps();
+  }, [loadTodaySteps]);
+
+  const openEdit = () => {
+    setStepValue(todaySteps != null && todaySteps > 0 ? todaySteps.toString() : "");
+    setStepEditing(true);
+  };
+
+  const handleStepSave = async () => {
+    if (!profile) return;
+    const num = parseInt(stepValue, 10);
+    if (isNaN(num) || num < 0) {
+      setStepEditing(false);
+      return;
+    }
+    setStepSaving(true);
+    try {
+      await upsertStepEntry(profile.uid, todayKey, num);
+      setTodaySteps(num);
+      await refreshProfile();
+    } finally {
+      setStepSaving(false);
+      setStepEditing(false);
+      setStepValue("");
+    }
+  };
 
   return (
     <>
@@ -57,6 +97,55 @@ export default function Nav() {
 
         {/* Right side */}
         <div className="flex items-center gap-3">
+          {/* Desktop step chip */}
+          {profile && (
+            <div className="hidden md:flex items-center">
+              {stepEditing ? (
+                <div className="flex items-center gap-1.5 bg-white/[0.06] ring-1 ring-[var(--gold)]/30 rounded-xl px-3 py-1.5">
+                  <span className="text-sm">👣</span>
+                  <input
+                    autoFocus
+                    type="number"
+                    value={stepValue}
+                    onChange={(e) => setStepValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleStepSave();
+                      if (e.key === "Escape") setStepEditing(false);
+                    }}
+                    className="w-20 bg-transparent text-sm text-white font-mono focus:outline-none"
+                    placeholder="steps"
+                  />
+                  <button
+                    onClick={handleStepSave}
+                    disabled={stepSaving}
+                    className="text-xs text-[var(--gold)] font-mono hover:text-[var(--gold-light)] transition-colors"
+                  >
+                    {stepSaving ? "..." : "save"}
+                  </button>
+                  <button
+                    onClick={() => setStepEditing(false)}
+                    className="text-xs text-white/25 font-mono hover:text-white/50 transition-colors"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={openEdit}
+                  className="flex items-center gap-2 bg-white/[0.04] hover:bg-white/[0.07] rounded-xl px-3 py-1.5 transition-all group"
+                  title="Update today's steps"
+                >
+                  <span className="text-sm">👣</span>
+                  <span className="font-mono text-sm text-white/60 group-hover:text-white/80">
+                    {todaySteps !== null ? formatSteps(todaySteps) : "—"}
+                  </span>
+                  <span className="text-[10px] text-white/25 font-mono">today</span>
+                  <span className="text-[10px] text-white/20 group-hover:text-[var(--gold)]/50 transition-colors">✎</span>
+                </button>
+              )}
+            </div>
+          )}
+
           {profile?.photoURL ? (
             <Image
               src={profile.photoURL}
@@ -133,6 +222,57 @@ export default function Nav() {
               )}
             </Link>
           ))}
+
+          {/* Mobile step counter */}
+          {profile && (
+            <div className="pt-2 pb-1 border-t border-white/[0.05] mt-2">
+              <div className="px-4 py-2">
+                <div className="text-[10px] font-mono text-white/25 uppercase tracking-widest mb-2">Today&apos;s Steps</div>
+                {stepEditing ? (
+                  <div className="flex items-center gap-2 bg-white/[0.06] ring-1 ring-[var(--gold)]/30 rounded-xl px-3 py-2">
+                    <span>👣</span>
+                    <input
+                      autoFocus
+                      type="number"
+                      value={stepValue}
+                      onChange={(e) => setStepValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleStepSave();
+                        if (e.key === "Escape") setStepEditing(false);
+                      }}
+                      className="flex-1 bg-transparent text-sm text-white font-mono focus:outline-none"
+                      placeholder="enter total steps"
+                    />
+                    <button
+                      onClick={handleStepSave}
+                      disabled={stepSaving}
+                      className="text-xs text-[var(--gold)] font-mono"
+                    >
+                      {stepSaving ? "..." : "save"}
+                    </button>
+                    <button
+                      onClick={() => setStepEditing(false)}
+                      className="text-xs text-white/30 font-mono"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={openEdit}
+                    className="w-full flex items-center gap-3 bg-white/[0.04] hover:bg-white/[0.07] rounded-xl px-3 py-2.5 transition-all"
+                  >
+                    <span>👣</span>
+                    <span className="font-mono text-base text-white/80">
+                      {todaySteps !== null ? formatSteps(todaySteps) : "—"}
+                    </span>
+                    <span className="ml-auto text-xs text-white/30 font-mono">tap to update ✎</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="pt-2 pb-1 border-t border-white/[0.05] mt-2">
             <button
               onClick={() => { signOut(); setMenuOpen(false); }}

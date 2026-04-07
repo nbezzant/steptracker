@@ -294,3 +294,35 @@ export async function getAllUserProfiles(): Promise<UserProfile[]> {
   const snap = await getDocs(collection(db, "users"));
   return snap.docs.map((d) => d.data() as UserProfile);
 }
+
+export async function getTeamStepsForMonth(
+  teamId: TeamId,
+  year: number,
+  month: number // 0-indexed
+): Promise<Record<string, number>> {
+  const usersQ = query(collection(db, "users"), where("teamId", "==", teamId));
+  const usersSnap = await getDocs(usersQ);
+  const uids = new Set(usersSnap.docs.map((d) => d.id));
+
+  if (uids.size === 0) return {};
+
+  const startDate = format(new Date(year, month, 1), "yyyy-MM-dd");
+  const endDate = format(new Date(year, month + 1, 0), "yyyy-MM-dd");
+
+  const stepsQ = query(
+    collection(db, "steps"),
+    where("date", ">=", startDate),
+    where("date", "<=", endDate)
+  );
+  const stepsSnap = await getDocs(stepsQ);
+
+  const totals: Record<string, number> = {};
+  stepsSnap.docs.forEach((d) => {
+    const entry = d.data() as StepEntry;
+    if (uids.has(entry.uid)) {
+      totals[entry.date] = (totals[entry.date] || 0) + entry.steps;
+    }
+  });
+
+  return totals;
+}
