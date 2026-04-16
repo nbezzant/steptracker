@@ -129,11 +129,14 @@ export default function DashboardPage() {
           </div>
 
           {/* Stats row */}
-          <div
-            className="grid grid-cols-3 gap-4 mt-6 animate-fade-up"
-            style={{ animationDelay: "0.25s", opacity: 0 }}
-          >
-            {[
+          {(() => {
+            const personalGoal = Math.round(1_000_000 / 3);
+            const stepsRemaining = Math.max(0, personalGoal - profile.totalSteps);
+            const now = new Date();
+            const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+            const daysRemaining = daysInMonth - now.getDate() + 1;
+            const avgRequired = stepsRemaining > 0 ? Math.ceil(stepsRemaining / daysRemaining) : 0;
+            const stats = [
               { label: "Total Steps", value: formatSteps(profile.totalSteps) },
               {
                 label: "Team",
@@ -141,9 +144,20 @@ export default function DashboardPage() {
               },
               {
                 label: "Goal",
-                value: `${Math.round((profile.totalSteps / 1_000_000) * 100)}%`,
+                value: `${Math.round((profile.totalSteps / personalGoal) * 100)}%`,
               },
-            ].map((stat) => (
+              { label: "Steps Remaining", value: formatSteps(stepsRemaining) },
+              {
+                label: "Avg/Day Needed",
+                value: stepsRemaining > 0 ? formatSteps(avgRequired) : "Goal met!",
+              },
+            ];
+            return (
+          <div
+            className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-6 animate-fade-up"
+            style={{ animationDelay: "0.25s", opacity: 0 }}
+          >
+            {stats.map((stat) => (
               <div key={stat.label} className="glass rounded-2xl p-5 text-center">
                 <div className="text-white/30 text-xs font-mono uppercase tracking-widest mb-2">
                   {stat.label}
@@ -152,6 +166,8 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+            );
+          })()}
         </div>
       )}
     </AuthGuard>
