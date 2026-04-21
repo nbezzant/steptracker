@@ -134,8 +134,8 @@ export default function DashboardPage() {
             const stepsRemaining = Math.max(0, personalGoal - profile.totalSteps);
             const now = new Date();
             const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-            const daysRemaining = daysInMonth - now.getDate() + 1;
-            const avgRequired = stepsRemaining > 0 ? Math.ceil(stepsRemaining / daysRemaining) : 0;
+            const daysRemaining = daysInMonth - now.getDate();
+            const avgRequired = stepsRemaining > 0 && daysRemaining > 0 ? Math.ceil(stepsRemaining / daysRemaining) : 0;
             const stats = [
               { label: "Total Steps", value: formatSteps(profile.totalSteps) },
               {
@@ -148,7 +148,7 @@ export default function DashboardPage() {
               },
               { label: "Steps Remaining", value: formatSteps(stepsRemaining) },
               {
-                label: "Avg/Day Needed",
+                label: "Avg/Day Needed After Today",
                 value: stepsRemaining > 0 ? formatSteps(avgRequired) : "Goal met!",
               },
             ];
