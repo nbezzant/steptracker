@@ -26,6 +26,7 @@ export interface UserProfile {
   teamId: TeamId | null;
   createdAt: Timestamp;
   totalSteps: number;
+  appPreference?: "steps" | "habits";
 }
 
 export interface StepEntry {
@@ -54,6 +55,14 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   const ref = doc(db, "users", uid);
   const snap = await getDoc(ref);
   return snap.exists() ? (snap.data() as UserProfile) : null;
+}
+
+export async function updateAppPreference(
+  uid: string,
+  appPreference: "steps" | "habits"
+): Promise<void> {
+  const ref = doc(db, "users", uid);
+  await updateDoc(ref, { appPreference });
 }
 
 export async function createOrUpdateUserProfile(

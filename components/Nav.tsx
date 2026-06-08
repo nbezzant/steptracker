@@ -2,13 +2,19 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { TEAMS, getStepEntry, upsertStepEntry, dateKey } from "@/lib/firestore";
+import {
+  TEAMS,
+  getStepEntry,
+  upsertStepEntry,
+  dateKey,
+  updateAppPreference,
+} from "@/lib/firestore";
 import { formatSteps, cn } from "@/lib/utils";
 import Image from "next/image";
 
-const navItems = [
+const stepsNavItems = [
   { href: "/dashboard", label: "Today", icon: "⚡" },
   { href: "/calendar", label: "Calendar", icon: "📅" },
   { href: "/leaderboard", label: "Leaderboard", icon: "🏆" },
@@ -16,28 +22,52 @@ const navItems = [
   { href: "/trend", label: "Trend", icon: "📈" },
 ];
 
+const habitsNavItems = [
+  { href: "/habits/log", label: "Log", icon: "✅" },
+  { href: "/habits/calendar", label: "Calendar", icon: "📅" },
+  { href: "/habits/leaderboard", label: "Leaderboard", icon: "🏆" },
+];
+
 export default function Nav() {
   const pathname = usePathname();
+  const router = useRouter();
   const { profile, refreshProfile, signOut } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
 
   const [todaySteps, setTodaySteps] = useState<number | null>(null);
   const [stepEditing, setStepEditing] = useState(false);
   const [stepValue, setStepValue] = useState("");
   const [stepSaving, setStepSaving] = useState(false);
 
+  const currentApp = profile?.appPreference ?? "habits";
   const team = profile?.teamId ? TEAMS[profile.teamId] : null;
   const todayKey = dateKey(new Date());
+  const navItems = currentApp === "habits" ? habitsNavItems : stepsNavItems;
 
   const loadTodaySteps = useCallback(async () => {
-    if (!profile) return;
+    if (!profile || currentApp !== "steps") return;
     const entry = await getStepEntry(profile.uid, todayKey);
     setTodaySteps(entry?.steps ?? 0);
-  }, [profile, todayKey]);
+  }, [profile, todayKey, currentApp]);
 
   useEffect(() => {
     loadTodaySteps();
   }, [loadTodaySteps]);
+
+  const toggleApp = async () => {
+    if (!profile || switching) return;
+    setSwitching(true);
+    const newApp = currentApp === "steps" ? "habits" : "steps";
+    try {
+      await updateAppPreference(profile.uid, newApp);
+      await refreshProfile();
+      setMenuOpen(false);
+      router.push(newApp === "habits" ? "/habits/log" : "/dashboard");
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   const openEdit = () => {
     setStepValue(todaySteps != null && todaySteps > 0 ? todaySteps.toString() : "");
@@ -65,16 +95,31 @@ export default function Nav() {
 
   return (
     <>
-      <nav className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-6 py-4 glass border-b border-white/[0.05]">
-        {/* Logo */}
-        <Link href="/dashboard" className="font-display text-xl text-white flex items-center gap-2">
-          FlakeFam<span className="italic text-[var(--gold)]">Step Challenge</span>
-          {team && (
-            <span className="text-xs font-mono font-normal text-white/30 ml-2">
+      <nav className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-4 md:px-6 py-4 glass border-b border-white/[0.05]">
+        {/* Logo — tap to toggle app */}
+        <button
+          onClick={toggleApp}
+          disabled={switching || !profile}
+          className="font-display text-xl text-white flex items-center gap-2 hover:opacity-80 active:opacity-60 transition-opacity disabled:opacity-50 text-left"
+          title={`Switch to ${currentApp === "steps" ? "Sleep & Talk" : "Step Challenge"}`}
+        >
+          <span className="hidden sm:inline">FlakeFam</span>
+          <span className="sm:hidden">FF</span>
+          <span className={cn(
+            "italic transition-colors duration-300",
+            currentApp === "habits" ? "text-emerald-400" : "text-[var(--gold)]"
+          )}>
+            {currentApp === "habits" ? "Sleep & Talk Tracker" : "Step Challenge"}
+          </span>
+          {team && currentApp === "steps" && (
+            <span className="text-xs font-mono font-normal text-white/30 hidden lg:inline">
               {team.emoji} {team.name}
             </span>
           )}
-        </Link>
+          {switching && (
+            <span className="ml-1 w-3 h-3 border border-white/40 border-t-transparent rounded-full animate-spin inline-block" />
+          )}
+        </button>
 
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-1">
@@ -97,8 +142,8 @@ export default function Nav() {
 
         {/* Right side */}
         <div className="flex items-center gap-3">
-          {/* Desktop step chip */}
-          {profile && (
+          {/* Desktop step chip — steps app only */}
+          {profile && currentApp === "steps" && (
             <div className="hidden md:flex items-center">
               {stepEditing ? (
                 <div className="flex items-center gap-1.5 bg-white/[0.06] ring-1 ring-[var(--gold)]/30 rounded-xl px-3 py-1.5">
@@ -152,14 +197,14 @@ export default function Nav() {
               alt={profile.displayName}
               width={32}
               height={32}
-              className="rounded-full"
+              className="rounded-full flex-shrink-0"
             />
           ) : (
-            <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs">
+            <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs flex-shrink-0">
               {profile?.displayName?.[0] ?? "?"}
             </div>
           )}
-          {/* Desktop sign out */}
+
           <button
             onClick={signOut}
             className="hidden md:block text-xs text-white/30 hover:text-white/60 transition-colors font-mono"
@@ -173,24 +218,9 @@ export default function Nav() {
             className="md:hidden flex flex-col gap-1.5 p-2 rounded-lg hover:bg-white/[0.05] transition-all"
             aria-label="Toggle menu"
           >
-            <span
-              className={cn(
-                "block w-5 h-0.5 bg-white/60 rounded transition-all duration-300",
-                menuOpen && "rotate-45 translate-y-2"
-              )}
-            />
-            <span
-              className={cn(
-                "block w-5 h-0.5 bg-white/60 rounded transition-all duration-300",
-                menuOpen && "opacity-0"
-              )}
-            />
-            <span
-              className={cn(
-                "block w-5 h-0.5 bg-white/60 rounded transition-all duration-300",
-                menuOpen && "-rotate-45 -translate-y-2"
-              )}
-            />
+            <span className={cn("block w-5 h-0.5 bg-white/60 rounded transition-all duration-300", menuOpen && "rotate-45 translate-y-2")} />
+            <span className={cn("block w-5 h-0.5 bg-white/60 rounded transition-all duration-300", menuOpen && "opacity-0")} />
+            <span className={cn("block w-5 h-0.5 bg-white/60 rounded transition-all duration-300", menuOpen && "-rotate-45 -translate-y-2")} />
           </button>
         </div>
       </nav>
@@ -218,13 +248,16 @@ export default function Nav() {
               <span className="text-lg">{item.icon}</span>
               <span>{item.label}</span>
               {pathname === item.href && (
-                <span className="ml-auto text-[var(--gold)] text-xs font-mono">●</span>
+                <span className={cn(
+                  "ml-auto text-xs font-mono",
+                  currentApp === "habits" ? "text-emerald-400" : "text-[var(--gold)]"
+                )}>●</span>
               )}
             </Link>
           ))}
 
-          {/* Mobile step counter */}
-          {profile && (
+          {/* Mobile step counter — steps app only */}
+          {profile && currentApp === "steps" && (
             <div className="pt-2 pb-1 border-t border-white/[0.05] mt-2">
               <div className="px-4 py-2">
                 <div className="text-[10px] font-mono text-white/25 uppercase tracking-widest mb-2">Today&apos;s Steps</div>
@@ -243,19 +276,10 @@ export default function Nav() {
                       className="flex-1 bg-transparent text-sm text-white font-mono focus:outline-none"
                       placeholder="enter total steps"
                     />
-                    <button
-                      onClick={handleStepSave}
-                      disabled={stepSaving}
-                      className="text-xs text-[var(--gold)] font-mono"
-                    >
+                    <button onClick={handleStepSave} disabled={stepSaving} className="text-xs text-[var(--gold)] font-mono">
                       {stepSaving ? "..." : "save"}
                     </button>
-                    <button
-                      onClick={() => setStepEditing(false)}
-                      className="text-xs text-white/30 font-mono"
-                    >
-                      ✕
-                    </button>
+                    <button onClick={() => setStepEditing(false)} className="text-xs text-white/30 font-mono">✕</button>
                   </div>
                 ) : (
                   <button
@@ -287,10 +311,7 @@ export default function Nav() {
 
       {/* Backdrop */}
       {menuOpen && (
-        <div
-          className="fixed inset-0 z-30 md:hidden"
-          onClick={() => setMenuOpen(false)}
-        />
+        <div className="fixed inset-0 z-30 md:hidden" onClick={() => setMenuOpen(false)} />
       )}
     </>
   );
