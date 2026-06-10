@@ -5,22 +5,18 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
 export default function Home() {
-  const { user, profile, loading } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading) {
       if (user) {
-        if (profile?.appPreference === "steps") {
-          router.replace("/dashboard");
-        } else {
-          router.replace("/habits/log");
-        }
+        router.replace("/habits/log");
       } else {
         router.replace("/login");
       }
     }
-  }, [user, profile, loading, router]);
+  }, [user, loading, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center">
