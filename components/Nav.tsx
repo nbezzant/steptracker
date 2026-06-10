@@ -45,6 +45,20 @@ export default function Nav() {
   const todayKey = dateKey(new Date());
   const navItems = currentApp === "habits" ? habitsNavItems : stepsNavItems;
 
+  const stepsPages = ["/dashboard", "/calendar", "/leaderboard", "/team", "/trend"];
+  const isOnStepsPage = stepsPages.some((p) => pathname === p || pathname.startsWith(p + "/"));
+  const isOnHabitsPage = pathname.startsWith("/habits");
+
+  // Redirect if page and app mode are mismatched
+  useEffect(() => {
+    if (!profile) return;
+    if (currentApp === "habits" && isOnStepsPage) {
+      router.replace("/habits/log");
+    } else if (currentApp === "steps" && isOnHabitsPage) {
+      router.replace("/dashboard");
+    }
+  }, [profile, currentApp, isOnStepsPage, isOnHabitsPage, router]);
+
   const loadTodaySteps = useCallback(async () => {
     if (!profile || currentApp !== "steps") return;
     const entry = await getStepEntry(profile.uid, todayKey);
