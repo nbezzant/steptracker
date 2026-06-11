@@ -11,6 +11,8 @@ import {
   User,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut as firebaseSignOut,
 } from "firebase/auth";
 import { auth, googleProvider } from "./firebase";
@@ -43,6 +45,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    // Process result when returning from a redirect sign-in
+    getRedirectResult(auth).then(async (result) => {
+      if (result?.user) {
+        await createOrUpdateUserProfile(result.user.uid, {
+          displayName: result.user.displayName ?? "",
+          email: result.user.email ?? "",
+          photoURL: result.user.photoURL ?? "",
+        });
+      }
+    }).catch(() => {});
+
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
@@ -62,7 +75,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signInWithGoogle = async () => {
-    await signInWithPopup(auth, googleProvider);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code === "auth/popup-blocked" || code === "auth/popup-closed-by-user") {
+        await signInWithRedirect(auth, googleProvider);
+      }
+    }
   };
 
   const signOut = async () => {
