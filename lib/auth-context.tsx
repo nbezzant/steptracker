@@ -54,7 +54,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           photoURL: result.user.photoURL ?? "",
         });
       }
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error("getRedirectResult error:", err?.code, err?.message);
+    });
 
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
@@ -77,11 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code;
-      if (code === "auth/popup-blocked" || code === "auth/popup-closed-by-user") {
-        await signInWithRedirect(auth, googleProvider);
-      }
+    } catch {
+      // Popup failed for any reason — fall back to redirect
+      await signInWithRedirect(auth, googleProvider);
     }
   };
 
